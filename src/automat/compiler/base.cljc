@@ -12,7 +12,7 @@
 
 (def is-identical? #?(:clj identical? :cljs keyword-identical?))
 
-(defn- advance [fsm state stream signal reducers restart?]
+(defn- advance [fsm state stream signal match-fn reducers restart?]
   (let [signal #(if (is-identical? % ::eof) % (signal %))
         ^CompiledAutomatonState original-state state
         stream (stream/to-stream stream)
@@ -36,7 +36,8 @@
               stream-index
               value))
 
-          (let [state'' (get-in fsm [:state->input->state state input])
+          (let [transition-map (get-in fsm [:state->input->state state])
+                state'' (match-fn transition-map input)
                 state'  (or state'' (get-in fsm [:state->input->state state fsm/default]))
                 default? (not (identical? state'' state'))
                 value' (if state'
@@ -86,8 +87,9 @@
                 (inc stream-index)))))))))
 
 (defn compile
-  [fsm {:keys [reducers signal action-comparator]
-        :or {signal identity}}]
+  [fsm {:keys [reducers signal action-comparator match-fn]
+        :or {signal identity
+             match-fn get}}]
   {:pre [(core/precompiled-automaton? fsm)]}
   (let [initially-accepted? (contains? (:accept fsm) 0)]
     (with-meta
@@ -104,10 +106,10 @@
           (let [state (core/->automaton-state this state)]
             (if (.-accepted? ^CompiledAutomatonState state)
               state
-              (advance fsm state stream signal reducers true))))
+              (advance fsm state stream signal match-fn reducers true))))
         (advance-stream [this state stream reject-value]
           (let [state (core/->automaton-state this state)
-                state' (advance fsm state stream signal reducers false)]
+                state' (advance fsm state stream signal match-fn reducers false)]
             (if (is-identical? ::reject state')
               reject-value
               state'))))
