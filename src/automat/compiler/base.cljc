@@ -12,6 +12,10 @@
 
 (def is-identical? #?(:clj identical? :cljs keyword-identical?))
 
+(defn- default-match-fn [transition-map input]
+  (when-let [state (get transition-map input)]
+    [state input]))
+
 (defn- advance [fsm state stream signal match-fn reducers restart?]
   (let [signal #(if (is-identical? % ::eof) % (signal %))
         ^CompiledAutomatonState original-state state
@@ -37,14 +41,14 @@
               value))
 
           (let [transition-map (get-in fsm [:state->input->state state])
-                state'' (match-fn transition-map input)
+                [state'' actual-input] (match-fn transition-map input)
                 state'  (or state'' (get-in fsm [:state->input->state state fsm/default]))
                 default? (not (identical? state'' state'))
                 value' (if state'
                          (->> (concat
                                 (get-in fsm [:state->input->actions state fsm/pre])
                                 (when-not default?
-                                  (get-in fsm [:state->input->actions state input]))
+                                  (get-in fsm [:state->input->actions state actual-input]))
                                 (when default?
                                   (get-in fsm [:state->input->actions state fsm/default])))
                            distinct
@@ -89,7 +93,7 @@
 (defn compile
   [fsm {:keys [reducers signal action-comparator match-fn]
         :or {signal identity
-             match-fn get}}]
+             match-fn default-match-fn}}]
   {:pre [(core/precompiled-automaton? fsm)]}
   (let [initially-accepted? (contains? (:accept fsm) 0)]
     (with-meta
