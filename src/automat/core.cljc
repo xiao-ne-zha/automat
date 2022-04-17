@@ -125,8 +125,7 @@
   [fsm state stream]
   (let [^CompiledAutomatonState state (core/->automaton-state fsm state)
         stream (stream/to-stream stream)
-        stream (toseqs stream)
-        stream (-> stream vec (conj ::eof))]
+        stream (toseqs stream)]
     (loop [state state
            stream stream]
       (if (clj/or (.-accepted? state) (.-checkpoint state))
