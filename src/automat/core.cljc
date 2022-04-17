@@ -2,6 +2,7 @@
   (:refer-clojure :exclude [concat compile find range .. * + or and not complement])
   (:require
    [automat.compiler.base :as base]
+   [automat.compiler.backtrack :as backtrack]
    [automat.compiler.core :as core :refer [#?(:cljs CompiledAutomatonState)]]
    [automat.fsm :as fsm]
    [automat.stream :as stream]
@@ -15,7 +16,7 @@
              CompiledAutomatonState])))
 
 (def is-identical? #?(:clj identical? :cljs keyword-identical?))
-  
+
 (defn $
   "Defines a state tag, which can be correlated to a reducer function using `compile`."
   [tag]
@@ -112,6 +113,44 @@
             (recur state')
             state'))))))
 
+(defn- toseqs [stream]
+  (for [x (repeatedly #(stream/next-input stream ::eof))
+        :while (not= x ::eof)]
+    x))
+
+(defn backtrack-greedy-find
+  "Greedily find the largest possible accepted sub-sequence.  Will only return an `accepted?` state once subsequent
+   inputs have been rejected.  Since this always consumes more inputs than the accepted sub-sequence, be careful when
+   using impure functions or input sources."
+  [fsm state stream]
+  (let [^CompiledAutomatonState state (core/->automaton-state fsm state)
+        stream (stream/to-stream stream)
+        stream (toseqs stream)
+        stream (-> stream vec (conj ::eof))]
+    (loop [state state
+           stream stream]
+      (if (clj/or (.-accepted? state) (.-checkpoint state))
+        (let [state' (advance-stream fsm state stream ::reject)]
+          (cond
+            (is-identical? ::reject state')
+            (if (.-accepted? state)
+              state
+              (.-checkpoint state))
+
+            (identical? state state')
+            state
+
+            :else
+            (recur state' stream)))
+        (let [^CompiledAutomatonState state' (find fsm state stream)]
+          (if (.-accepted? state')
+            (let [stream (stream/to-stream stream)
+                  original-stream-index (.-stream-index state')]
+              (do
+                (dorun (repeatedly original-stream-index #(stream/next-input stream ::eof)))
+                (recur state' stream)))
+            state'))))))
+
 (defn advance
   "Advances a single position in the automaton.  Takes a compiled `fsm`, a `state` which is either an initial reduce
    value or a CompiledAutomatonState previously returned by `advance`, and an input.
@@ -157,7 +196,8 @@
           ;TODO cljc port - figure out what is going on here
           ;#+clj #+clj
           #?(:clj :eval) #?(:clj eval/compile)
-          :base base/compile)
+          :base base/compile
+          :backtrack backtrack/compile)
         fsm options)))))
 
 ;;; define these last, so we don't use them mistakenly elsewhere

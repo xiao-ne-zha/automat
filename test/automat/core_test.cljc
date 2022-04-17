@@ -15,7 +15,7 @@
       (= start-index (:start-index state))
       (= stream-index (:stream-index state)))))
 
-(def backends [:base #?(:clj :eval)])
+(def backends [:base #?(:clj :eval) :backtrack])
 
 (deftest test-find
   (doseq [backend backends]
@@ -55,14 +55,14 @@
          1 3 [0 2 3]]))))
 
 (deftest test-greedy-find
-  (doseq [backend backends]
+  (doseq [backend (remove #(= :backtrack %) backends)]
     (testing backend
       (are [fsm input-seqs]
-        (let [fsm' (a/compile fsm {:backend backend})]
-          (every?
-            (fn [[start end s]]
-              (accepts? a/greedy-find fsm' start end s))
-            (partition 3 input-seqs)))
+          (let [fsm' (a/compile fsm {:backend backend})]
+            (every?
+             (fn [[start end s]]
+               (accepts? a/greedy-find fsm' start end s))
+             (partition 3 input-seqs)))
 
         a/any
         [0 1 [1]
@@ -71,6 +71,33 @@
         (a/+ 1)
         [0 2 [1 1]
          1 3 [0 1 1 0]]))))
+
+(deftest test-backtrack-greedy-find
+  (testing :backtrack
+    (are [fsm input-seqs]
+        (let [fsm' (a/compile fsm {:backend :backtrack})]
+          (every?
+           (fn [[start end s]]
+             (accepts? a/backtrack-greedy-find fsm' start end s))
+           (partition 3 input-seqs)))
+
+      [2 3 (a/+ a/any) 3 4]
+      [3 12 [1 0 1 2 3 0 0 3 1 2 3 4]]
+
+      a/any
+      [0 1 [1]
+       0 1 [2 3]]
+
+      (a/+ 1)
+      [0 2 [1 1]
+       1 3 [0 1 1 0]])))
+
+(defn run-fsm [backend fsm f inputs]
+  (let [fsm' (a/compile
+              [(a/$ :init) fsm]
+              {:reducers {:init (constantly []), :conj conj, :conj_ conj}
+               :backend backend})]
+    (reduce #(f fsm' %1 %2) nil inputs)))
 
 (deftest test-advance
   (doseq [backend backends]
