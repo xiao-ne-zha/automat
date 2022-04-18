@@ -16,6 +16,35 @@
   (when-let [state (get transition-map input)]
     [state input]))
 
+(declare ^:private find-advance-inter)
+
+(defn- find-default-way [fsm begin-state-index state-index start-index stream-index value stream  signal match-fn reducers original-input]
+  (let [s2  (get-in fsm [:state->input->state state-index fsm/default])
+                value' (if s2
+                         (->> (concat
+                               (get-in fsm [:state->input->actions state-index fsm/pre])
+                               (get-in fsm [:state->input->actions state-index fsm/default]))
+                              distinct
+                              (map reducers)
+                              (remove nil?)
+                              (reduce #(%2 %1 original-input) value))
+                         value)]
+            (if (or (nil? s2) (is-identical? fsm/reject s2))
+              (if (= state-index begin-state-index)
+                (find-advance-inter fsm begin-state-index state-index (inc stream-index)
+                                    (inc stream-index) value stream signal match-fn
+                                    reducers)
+                ::reject)
+              (if (contains? (:accept fsm) s2)
+                (CompiledAutomatonState.
+                 true
+                 nil
+                 s2
+                 start-index
+                 (inc stream-index)
+                 value')
+                (find-advance-inter fsm begin-state-index (long s2) start-index (inc stream-index) value' stream signal match-fn reducers)))))
+
 (defn- find-advance-inter
   "算法：
   1. 依据当前状态、当前输入获取取下一个状态s1和实际输入a1，计算转移到下一个状态过程中得到的值v1
@@ -54,31 +83,7 @@
                           (reduce #(%2 %1 original-input) value))
                      value)]
         (if (or (nil? s1) (is-identical? s1 fsm/reject))
-          (let [s2  (get-in fsm [:state->input->state state-index fsm/default])
-                value' (if s2
-                         (->> (concat
-                               (get-in fsm [:state->input->actions state-index fsm/pre])
-                               (get-in fsm [:state->input->actions state-index fsm/default]))
-                              distinct
-                              (map reducers)
-                              (remove nil?)
-                              (reduce #(%2 %1 original-input) value))
-                         value)]
-            (if (or (nil? s2) (is-identical? fsm/reject s2))
-              (if (= state-index begin-state-index)
-                (find-advance-inter fsm begin-state-index state-index (inc stream-index)
-                                    (inc stream-index) value stream signal match-fn
-                                    reducers)
-                ::reject)
-              (if (contains? (:accept fsm) s2)
-                (CompiledAutomatonState.
-                 true
-                 nil
-                 s2
-                 start-index
-                 (inc stream-index)
-                 value')
-                (find-advance-inter fsm begin-state-index (long s2) start-index (inc stream-index) value' stream signal match-fn reducers))))
+          (find-default-way fsm begin-state-index state-index start-index stream-index value stream signal match-fn reducers original-input)
           (if (contains? (:accept fsm) s1)
             (CompiledAutomatonState.
              true
@@ -90,34 +95,7 @@
             (let [^CompiledAutomatonState sr (find-advance-inter fsm begin-state-index (long s1) start-index (inc stream-index) value' stream signal match-fn reducers)]
               (if (and sr (not= ::reject sr) (.-accepted? sr))
                 sr
-                (let [s2  (get-in fsm [:state->input->state state-index fsm/default])
-                      value' (if s2
-                               (->> (concat
-                                     (get-in fsm [:state->input->actions state-index fsm/pre])
-                                     (get-in fsm [:state->input->actions state-index fsm/default]))
-                                    distinct
-                                    (map reducers)
-                                    (remove nil?)
-                                    (reduce #(%2 %1 original-input) value))
-                               value)]
-                  (if (or (nil? s2) (is-identical? fsm/reject s2))
-                    (if (= state-index begin-state-index)
-                      (find-advance-inter fsm begin-state-index state-index (inc stream-index)
-                                          (inc stream-index) value stream signal match-fn
-                                          reducers)
-                      ::reject)
-                    (if (contains? (:accept fsm) s2)
-                      (CompiledAutomatonState.
-                       true
-                       nil
-                       s2
-                       start-index
-                       (inc stream-index)
-                       value')
-                      (let [^CompiledAutomatonState sr2 (find-advance-inter fsm begin-state-index (long s2) start-index (inc stream-index) value' stream signal match-fn reducers)]
-                        (if (and sr2 (not= ::reject sr2) (.-accepted? sr2))
-                          sr2
-                          (find-advance-inter fsm begin-state-index state-index (inc stream-index) (inc stream-index)))))))))))))))
+                (find-default-way fsm begin-state-index state-index start-index stream-index value stream signal match-fn reducers original-input)))))))))
 
 (defn- find-advance [fsm ^CompiledAutomatonState state stream signal match-fn reducers]
   (let [signal #(if (is-identical? % ::eof) % (signal %))
